@@ -14,7 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#ifndef FALCO_STRIPPED
 #include <google/protobuf/util/time_util.h>
+#endif
 
 #include "falco_outputs.h"
 
@@ -22,11 +24,15 @@ limitations under the License.
 
 #include "formats.h"
 #include "logger.h"
+#ifndef FALCO_STRIPPED
 #include "falco_output_queue.h"
+#endif
 #include "banned.h" // This raises a compilation error when certain functions are used
 
 using namespace std;
+#ifndef FALCO_STRIPPED
 using namespace falco::output;
+#endif
 
 const static struct luaL_reg ll_falco_outputs [] =
 {
@@ -302,6 +308,7 @@ int falco_outputs::handle_http(lua_State *ls)
 
 int falco_outputs::handle_grpc(lua_State *ls)
 {
+#ifndef FALCO_STRIPPED
 	// check parameters
 	if(!lua_islightuserdata(ls, -8) ||
 	   !lua_isstring(ls, -7) ||
@@ -369,4 +376,7 @@ int falco_outputs::handle_grpc(lua_State *ls)
 	falco::output::queue::get().push(grpc_res);
 
 	return 1;
+#else
+	return 1;
+#endif
 }

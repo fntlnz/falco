@@ -38,32 +38,48 @@ add_custom_command(
           ${CMAKE_CURRENT_SOURCE_DIR}/output.proto
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-add_executable(
-  falco
-  configuration.cpp
-  logger.cpp
-  falco_outputs.cpp
-  event_drops.cpp
-  statsfilewriter.cpp
-  falco.cpp
-  "${SYSDIG_SOURCE_DIR}/userspace/sysdig/fields_info.cpp"
-  webserver.cpp
-  grpc_context.cpp
-  grpc_server_impl.cpp
-  grpc_request_context.cpp
-  grpc_server.cpp
-  ${CMAKE_CURRENT_BINARY_DIR}/version.grpc.pb.cc
-  ${CMAKE_CURRENT_BINARY_DIR}/version.pb.cc
-  ${CMAKE_CURRENT_BINARY_DIR}/output.grpc.pb.cc
-  ${CMAKE_CURRENT_BINARY_DIR}/output.pb.cc
-  ${CMAKE_CURRENT_BINARY_DIR}/schema.pb.cc)
+if(NOT STRIPPED_BUILD)
+  add_executable(
+    falco
+    configuration.cpp
+    logger.cpp
+    falco_outputs.cpp
+    event_drops.cpp
+    statsfilewriter.cpp
+    falco.cpp
+    "${SYSDIG_SOURCE_DIR}/userspace/sysdig/fields_info.cpp"
+    webserver.cpp
+    grpc_context.cpp
+    grpc_server_impl.cpp
+    grpc_request_context.cpp
+    grpc_server.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/version.grpc.pb.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/version.pb.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/output.grpc.pb.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/output.pb.cc
+    ${CMAKE_CURRENT_BINARY_DIR}/schema.pb.cc)
 
-add_dependencies(falco civetweb string-view-lite)
+    add_dependencies(falco civetweb)
+else()
+  add_executable(
+    falco
+    configuration.cpp
+    logger.cpp
+    falco_outputs.cpp
+    event_drops.cpp
+    statsfilewriter.cpp
+    falco.cpp
+    "${SYSDIG_SOURCE_DIR}/userspace/sysdig/fields_info.cpp")
+endif()
+
+add_dependencies(falco string-view-lite)
+
 
 if(USE_BUNDLED_DEPS)
   add_dependencies(falco yamlcpp)
 endif()
 
+if(NOT STRIPPED_BUILD)
 target_include_directories(
   falco
   PUBLIC
@@ -91,6 +107,26 @@ target_link_libraries(
   "${LIBYAML_LIB}"
   "${YAMLCPP_LIB}"
   "${CIVETWEB_LIB}")
+else()
+target_include_directories(
+  falco
+  PUBLIC
+    "${SYSDIG_SOURCE_DIR}/userspace/sysdig"
+    "${PROJECT_SOURCE_DIR}/userspace/engine"
+    "${PROJECT_BINARY_DIR}/userspace/falco"
+    "${PROJECT_BINARY_DIR}/driver/src"
+    "${STRING_VIEW_LITE_INCLUDE}"
+    "${YAMLCPP_INCLUDE_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    "${DRAIOS_DEPENDENCIES_DIR}/yaml-${DRAIOS_YAML_VERSION}/target/include")
+
+target_link_libraries(
+  falco
+  falco_engine
+  sinsp
+  "${LIBYAML_LIB}"
+  "${YAMLCPP_LIB}")
+endif()
 
 configure_file(config_falco.h.in config_falco.h)
 

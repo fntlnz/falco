@@ -1,0 +1,687 @@
+diff --git a/userspace/libscap/CMakeLists.txt b/userspace/libscap/CMakeLists.txt
+index 61b55810..a4d1027e 100644
+--- a/userspace/libscap/CMakeLists.txt
++++ b/userspace/libscap/CMakeLists.txt
+@@ -16,7 +16,9 @@
+ # limitations under the License.
+ #
+ include_directories("${PROJECT_SOURCE_DIR}/common")
++if(NOT STRIPPED_BUILD)
+ include_directories("${ZLIB_INCLUDE}")
++endif()
+ if(CYGWIN)
+ include_directories("${WIN_HAL_INCLUDE}")
+ endif()
+diff --git a/userspace/libsinsp/CMakeLists.txt b/userspace/libsinsp/CMakeLists.txt
+index bd26e6ff..980cdd03 100644
+--- a/userspace/libsinsp/CMakeLists.txt
++++ b/userspace/libsinsp/CMakeLists.txt
+@@ -26,10 +26,13 @@ include_directories("${LUAJIT_INCLUDE}")
+ if(NOT WIN32 AND NOT APPLE)
+ 	include_directories("${B64_INCLUDE}")
+ 	include_directories("${CURSES_INCLUDE_DIR}")
++if(NOT STRIPPED_BUILD)
++	
++	include_directories("${PROTOBUF_INCLUDE}")
+ 	include_directories("${GRPC_INCLUDE}")
+-	include_directories("${JQ_INCLUDE}")
++endif()
+ 	include_directories("${OPENSSL_INCLUDE_DIR}")
+-	include_directories("${PROTOBUF_INCLUDE}")
++	include_directories("${JQ_INCLUDE}")
+ 	include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+ endif()
+ 
+@@ -41,10 +44,6 @@ endif()
+ set(SINSP_SOURCES
+ 	chisel.cpp
+ 	chisel_api.cpp
+-	container.cpp
+-	container_engine/container_engine_base.cpp
+-	container_engine/docker_common.cpp
+-	container_info.cpp
+ 	ctext.cpp
+ 	cyclewriter.cpp
+ 	cursescomponents.cpp
+@@ -123,25 +122,36 @@ if(WIN32)
+ list(APPEND SINSP_SOURCES
+ 	container_engine/docker_win.cpp)
+ else()
+-list(APPEND SINSP_SOURCES
+-	container_engine/docker_linux.cpp
+-	container_engine/libvirt_lxc.cpp
+-	container_engine/lxc.cpp
+-	container_engine/mesos.cpp
+-	container_engine/rkt.cpp
+-	container_engine/bpm.cpp
+-	runc.cpp)
++if(NOT STRIPPED_BUILD)
++	list(APPEND SINSP_SOURCES
++		container.cpp
++		container_engine/container_engine_base.cpp
++		container_engine/docker_common.cpp
++		container_info.cpp
++		container_engine/docker_linux.cpp
++		container_engine/libvirt_lxc.cpp
++		container_engine/lxc.cpp
++		container_engine/mesos.cpp
++		container_engine/rkt.cpp
++		container_engine/bpm.cpp
++		runc.cpp)
++	endif()
+ endif()
+ 
+ if(NOT WIN32 AND NOT APPLE)
+ list(APPEND SINSP_SOURCES
+ 	cgroup_limits.cpp
+-	cri.cpp
+-	container_engine/cri.cpp
+-	${CMAKE_CURRENT_BINARY_DIR}/cri.grpc.pb.cc
+-	${CMAKE_CURRENT_BINARY_DIR}/cri.pb.cc
+-	grpc_channel_registry.cpp
+ )
++
++if(NOT STRIPPED_BUILD)
++	list(APPEND SINSP_SOURCES
++		cri.cpp
++		container_engine/cri.cpp
++		${CMAKE_CURRENT_BINARY_DIR}/cri.grpc.pb.cc
++		${CMAKE_CURRENT_BINARY_DIR}/cri.pb.cc
++		grpc_channel_registry.cpp
++	)
++endif()
+ endif()
+ 
+ add_library(sinsp STATIC ${SINSP_SOURCES})
+@@ -180,7 +190,7 @@ if(NOT WIN32)
+ 				COMMAND ${PROTOC} -I ${CMAKE_CURRENT_SOURCE_DIR} --cpp_out=. ${CMAKE_CURRENT_SOURCE_DIR}/cri.proto
+ 				COMMAND ${PROTOC} -I ${CMAKE_CURRENT_SOURCE_DIR} --grpc_out=. --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN} ${CMAKE_CURRENT_SOURCE_DIR}/cri.proto
+ 				WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+-
++		if(NOT STRIPPED_BUILD)
+ 		target_link_libraries(sinsp
+ 			"${GRPCPP_LIB}"
+ 			"${GRPC_LIB}"
+@@ -190,6 +200,14 @@ if(NOT WIN32)
+ 			"${B64_LIB}"
+ 			rt
+ 			anl)
++		else()
++		target_link_libraries(sinsp
++		"${CARES_LIB}"
++		"${JQ_LIB}"
++		"${B64_LIB}"
++		rt
++		anl)
++		endif()
+ 	endif()
+ 
+         if(USE_BUNDLED_OPENSSL)
+diff --git a/userspace/libsinsp/chisel_api.cpp b/userspace/libsinsp/chisel_api.cpp
+index 7d36cc40..dc8126c9 100644
+--- a/userspace/libsinsp/chisel_api.cpp
++++ b/userspace/libsinsp/chisel_api.cpp
+@@ -1124,6 +1124,8 @@ int lua_cbacks::get_thread_table_barebone_nofds(lua_State *ls)
+ int lua_cbacks::get_container_table(lua_State *ls)
+ {
+ #ifndef _WIN32
++#ifndef FALCO_STRIPPED
++
+ 	unordered_map<int64_t, sinsp_fdinfo_t>::iterator fdit;
+ 	uint32_t j;
+ 	sinsp_evt tevt;
+@@ -1143,6 +1145,7 @@ int lua_cbacks::get_container_table(lua_State *ls)
+ 	//
+ 	// Retrieve the container list
+ 	//
++
+ 	const sinsp_container_manager::map_ptr_t ctable = ch->m_inspector->m_container_manager.get_containers();
+ 
+ 	lua_newtable(ls);
+@@ -1214,6 +1217,8 @@ int lua_cbacks::get_container_table(lua_State *ls)
+ 		lua_rawseti(ls,-2, (uint32_t)++j);
+ 	}
+ 
++#endif
++	return 1;
+ #endif
+ 	return 1;
+ }
+diff --git a/userspace/libsinsp/container.cpp b/userspace/libsinsp/container.cpp
+index b54f6833..869b30ea 100644
+--- a/userspace/libsinsp/container.cpp
++++ b/userspace/libsinsp/container.cpp
+@@ -20,8 +20,10 @@ limitations under the License.
+ #include <algorithm>
+ 
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ #include "container_engine/cri.h"
+ #endif
++#endif
+ #include "container_engine/docker.h"
+ #include "container_engine/rkt.h"
+ #include "container_engine/libvirt_lxc.h"
+@@ -520,6 +522,7 @@ void sinsp_container_manager::create_engines()
+ 	}
+ 
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ 	{
+ 		auto cri_engine = std::make_shared<container_engine::cri>(*this);
+ 		m_container_engines.push_back(cri_engine);
+@@ -527,6 +530,7 @@ void sinsp_container_manager::create_engines()
+ 		m_container_engine_by_type[CT_CRIO] = cri_engine;
+ 		m_container_engine_by_type[CT_CONTAINERD] = cri_engine;
+ 	}
++#endif
+ #endif
+ 	{
+ 		auto lxc_engine = std::make_shared<container_engine::lxc>(*this);
+@@ -587,8 +591,10 @@ void sinsp_container_manager::cleanup()
+ void sinsp_container_manager::set_docker_socket_path(std::string socket_path)
+ {
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ 	libsinsp::container_engine::docker::set_docker_sock(std::move(socket_path));
+ #endif
++#endif
+ }
+ 
+ void sinsp_container_manager::set_query_docker_image_info(bool query_image_info)
+@@ -601,35 +607,45 @@ void sinsp_container_manager::set_query_docker_image_info(bool query_image_info)
+ void sinsp_container_manager::set_cri_extra_queries(bool extra_queries)
+ {
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ 	libsinsp::container_engine::cri::set_extra_queries(extra_queries);
+ #endif
++#endif
+ }
+ 
+ void sinsp_container_manager::set_cri_socket_path(const std::string &path)
+ {
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ 	libsinsp::container_engine::cri::set_cri_socket_path(path);
+ #endif
++#endif
+ }
+ 
+ void sinsp_container_manager::set_cri_timeout(int64_t timeout_ms)
+ {
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ 	libsinsp::container_engine::cri::set_cri_timeout(timeout_ms);
+ #endif
++#endif
+ }
+ 
+ void sinsp_container_manager::set_cri_async(bool async)
+ {
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ 	libsinsp::container_engine::cri::set_async(async);
+ #endif
++#endif
+ }
+ 
+ void sinsp_container_manager::set_cri_delay(uint64_t delay_ms)
+ {
+ #if defined(HAS_CAPTURE)
++#ifndef FALCO_STRIPPED
+ 	libsinsp::container_engine::cri::set_cri_delay(delay_ms);
+ #endif
++#endif
+ }
+ 
+diff --git a/userspace/libsinsp/container_engine/cri.cpp b/userspace/libsinsp/container_engine/cri.cpp
+index b78886d8..973cb029 100644
+--- a/userspace/libsinsp/container_engine/cri.cpp
++++ b/userspace/libsinsp/container_engine/cri.cpp
+@@ -16,6 +16,7 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ 
+ */
++#ifndef FALCO_STRIPPED
+ 
+ #include "container_engine/cri.h"
+ 
+@@ -421,4 +422,4 @@ void cri::update_with_size(const std::string& container_id)
+ 	container_cache().replace_container(updated);
+ }
+ 
+-
++#endif
+\ No newline at end of file
+diff --git a/userspace/libsinsp/container_engine/cri.h b/userspace/libsinsp/container_engine/cri.h
+index 0b4c802c..c7d146f5 100644
+--- a/userspace/libsinsp/container_engine/cri.h
++++ b/userspace/libsinsp/container_engine/cri.h
+@@ -28,7 +28,9 @@ class sinsp_threadinfo;
+ #include "container_engine/container_engine_base.h"
+ #include "container_engine/sinsp_container_type.h"
+ #include "container_info.h"
++#ifndef FALCO_STRIPPED
+ #include <cri.h>
++#endif
+ 
+ namespace runtime {
+ namespace v1alpha2 {
+diff --git a/userspace/libsinsp/cri.cpp b/userspace/libsinsp/cri.cpp
+index 498b1899..154ec6d6 100644
+--- a/userspace/libsinsp/cri.cpp
++++ b/userspace/libsinsp/cri.cpp
+@@ -16,7 +16,7 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ 
+ */
+-
++#ifndef FALCO_STRIPPED
+ #include "cri.h"
+ 
+ #include <chrono>
+@@ -425,3 +425,5 @@ std::string cri_interface::get_container_image_id(const std::string &image_ref)
+ }
+ }
+ }
++
++#endif // FALCO_STRIPPED
+\ No newline at end of file
+diff --git a/userspace/libsinsp/cri.h b/userspace/libsinsp/cri.h
+index 94df927c..74ce714b 100644
+--- a/userspace/libsinsp/cri.h
++++ b/userspace/libsinsp/cri.h
+@@ -19,6 +19,7 @@ limitations under the License.
+ 
+ #pragma once
+ 
++#ifndef FALCO_STRIPPED
+ #include <memory>
+ #include <string>
+ 
+@@ -165,3 +166,5 @@ private:
+ 
+ }
+ }
++
++#endif // FALCO_STRIPPED
+\ No newline at end of file
+diff --git a/userspace/libsinsp/cursescomponents.cpp b/userspace/libsinsp/cursescomponents.cpp
+index 4003cb4e..d316f4b6 100644
+--- a/userspace/libsinsp/cursescomponents.cpp
++++ b/userspace/libsinsp/cursescomponents.cpp
+@@ -933,6 +933,7 @@ void curses_textbox::process_event_spy(sinsp_evt* evt, int32_t next_res)
+ 	//
+ 	m_ctext->printf("%s", info_str.c_str());
+ 
++#ifndef FALCO_STRIPPED
+ 	if(m_parent->m_print_containers)
+ 	{
+ 		wattrset(m_win, m_parent->m_colors[sinsp_cursesui::LED_COLOR]);
+@@ -948,6 +949,7 @@ void curses_textbox::process_event_spy(sinsp_evt* evt, int32_t next_res)
+ 			wattrset(m_win, m_parent->m_colors[sinsp_cursesui::SPY_WRITE]);
+ 		}
+ 	}
++#endif
+ 
+ 	m_ctext->printf("\n");
+ 	m_ctext->printf("\n");
+diff --git a/userspace/libsinsp/cursesui.cpp b/userspace/libsinsp/cursesui.cpp
+index 1eeb0864..a717e52e 100644
+--- a/userspace/libsinsp/cursesui.cpp
++++ b/userspace/libsinsp/cursesui.cpp
+@@ -152,7 +152,7 @@ void json_spy_renderer::process_event_spy(sinsp_evt* evt, int32_t next_res)
+ 		ASSERT(tinfo);
+ 
+ 		line["p"] = tinfo->m_comm;
+-
++#ifndef FALCO_STRIPPED
+ 		if(!tinfo->m_container_id.empty())
+ 		{
+ 			const sinsp_container_info::ptr_t container_info =
+@@ -165,6 +165,7 @@ void json_spy_renderer::process_event_spy(sinsp_evt* evt, int32_t next_res)
+ 				}
+ 			}
+ 		}
++#endif
+ 
+ 		m_root.append(line);
+ 	}
+diff --git a/userspace/libsinsp/dumper.cpp b/userspace/libsinsp/dumper.cpp
+index f40facf9..0d5e42c2 100644
+--- a/userspace/libsinsp/dumper.cpp
++++ b/userspace/libsinsp/dumper.cpp
+@@ -80,7 +80,9 @@ void sinsp_dumper::open(const string& filename, bool compress, bool threads_from
+ 		m_inspector->m_thread_manager->dump_threads_to_file(m_dumper);
+ 	}
+ 
++#ifndef FALCO_STRIPPED
+ 	m_inspector->m_container_manager.dump_containers(m_dumper);
++#endif
+ 
+ 	m_nevts = 0;
+ }
+@@ -111,7 +113,9 @@ void sinsp_dumper::fdopen(int fd, bool compress, bool threads_from_sinsp)
+ 		m_inspector->m_thread_manager->dump_threads_to_file(m_dumper);
+ 	}
+ 
++#ifndef FALCO_STRIPPED
+ 	m_inspector->m_container_manager.dump_containers(m_dumper);
++#endif
+ 
+ 	m_nevts = 0;
+ }
+diff --git a/userspace/libsinsp/filterchecks.cpp b/userspace/libsinsp/filterchecks.cpp
+index dfa895ea..69f2494b 100644
+--- a/userspace/libsinsp/filterchecks.cpp
++++ b/userspace/libsinsp/filterchecks.cpp
+@@ -6105,6 +6105,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
+ 		}
+ 
+ 		RETURN_EXTRACT_STRING(m_tstr);
++#ifndef FALCO_STRIPPED
+ 	case TYPE_CONTAINER_NAME:
+ 		if(tinfo->m_container_id.empty())
+ 		{
+@@ -6451,7 +6452,7 @@ uint8_t* sinsp_filter_check_container::extract(sinsp_evt *evt, OUT uint32_t* len
+ 			m_tstr = "NONE";
+ 			RETURN_EXTRACT_STRING(m_tstr);
+ 		}
+-
++#endif //FALCO_STRIPPED
+ 	default:
+ 		ASSERT(false);
+ 		break;
+@@ -7759,8 +7760,10 @@ int32_t sinsp_filter_check_mesos::extract_arg(const string& fldname, const strin
+ mesos_task::ptr_t sinsp_filter_check_mesos::find_task_for_thread(const sinsp_threadinfo* tinfo)
+ {
+ 	ASSERT(m_inspector && tinfo);
++#ifndef FALCO_STRIPPED
+ 	if(tinfo)
+ 	{
++
+ 		if(tinfo->m_container_id.empty())
+ 		{
+ 			return NULL;
+@@ -7778,6 +7781,7 @@ mesos_task::ptr_t sinsp_filter_check_mesos::find_task_for_thread(const sinsp_thr
+ 			return mesos_state.get_task(container_info->m_mesos_task_id);
+ 		}
+ 	}
++#endif
+ 
+ 	return NULL;
+ }
+diff --git a/userspace/libsinsp/ifinfo.cpp b/userspace/libsinsp/ifinfo.cpp
+index fa6132c9..f4878e62 100644
+--- a/userspace/libsinsp/ifinfo.cpp
++++ b/userspace/libsinsp/ifinfo.cpp
+@@ -223,6 +223,7 @@ bool sinsp_network_interfaces::is_ipv4addr_in_subnet(uint32_t addr)
+ 
+ bool sinsp_network_interfaces::is_ipv4addr_in_local_machine(uint32_t addr, sinsp_threadinfo* tinfo)
+ {
++#ifndef FALCO_STRIPPED
+ 	if(!tinfo->m_container_id.empty())
+ 	{
+ 		const sinsp_container_info::ptr_t container_info =
+@@ -280,6 +281,7 @@ bool sinsp_network_interfaces::is_ipv4addr_in_local_machine(uint32_t addr, sinsp
+ 			}
+ 		}
+ 	}
++#endif
+ 
+ 	vector<sinsp_ipv4_ifinfo>::iterator it;
+ 
+@@ -349,12 +351,13 @@ ipv6addr sinsp_network_interfaces::infer_ipv6_address(ipv6addr &destination_addr
+ 
+ bool sinsp_network_interfaces::is_ipv6addr_in_local_machine(ipv6addr &addr, sinsp_threadinfo* tinfo)
+ {
++#ifndef FALCO_STRIPPED
+ 	if(!tinfo->m_container_id.empty())
+ 	{
+ 		// For now, not supporting ipv6 networking for containers. So always return false;
+ 		return false;
+ 	}
+-
++#endif
+ 	vector<sinsp_ipv6_ifinfo>::iterator it;
+ 
+ 	// try to find an interface that has the given IP as address
+diff --git a/userspace/libsinsp/parsers.cpp b/userspace/libsinsp/parsers.cpp
+index db6237fc..2554c363 100644
+--- a/userspace/libsinsp/parsers.cpp
++++ b/userspace/libsinsp/parsers.cpp
+@@ -1481,7 +1481,9 @@ void sinsp_parser::parse_clone_exit(sinsp_evt *evt)
+ 		case PPME_SYSCALL_CLONE_20_X:
+ 			parinfo = evt->get_param(14);
+ 			tinfo->set_cgroups(parinfo->m_val, parinfo->m_len);
++#ifndef FALCO_STRIPPED
+ 			m_inspector->m_container_manager.resolve_container(tinfo, m_inspector->is_live());
++#endif
+ 			break;
+ 	}
+ 
+@@ -1688,7 +1690,9 @@ void sinsp_parser::parse_execve_exit(sinsp_evt *evt)
+ 		// 2. docker-runc changes cgroup hierarchy of it
+ 		// 3. vpid=1 execve to the real process the user wants to run inside the container
+ 		//
++#ifndef FALCO_STRIPPED
+ 		m_inspector->m_container_manager.resolve_container(evt->m_tinfo, m_inspector->is_live());
++#endif
+ 		break;
+ 	default:
+ 		ASSERT(false);
+@@ -4499,7 +4503,7 @@ void sinsp_parser::parse_setgid_exit(sinsp_evt *evt)
+ 		}
+ 	}
+ }
+-
++#ifndef FALCO_STRIPPED
+ namespace
+ {
+ 	std::string generate_error_message(const Json::Value& value, const char* field) {
+@@ -4545,12 +4549,14 @@ namespace
+ 		}
+ 		return true;
+ 	}
+-}
+ 
++}
++#endif
+ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
+ {
+ 	ASSERT(m_inspector);
+ 
++#ifndef FALCO_STRIPPED
+ 	if(evt->m_tinfo_ref != nullptr)
+ 	{
+ 		const auto& container_id = evt->m_tinfo_ref->m_container_id;
+@@ -4562,7 +4568,6 @@ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
+ 			return;
+ 		}
+ 	}
+-
+ 	sinsp_evt_param *parinfo = evt->get_param(0);
+ 	ASSERT(parinfo);
+ 	ASSERT(parinfo->m_len > 0);
+@@ -4652,6 +4657,7 @@ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
+ 					container_info->m_id.c_str());
+ 				container_info->m_lookup_state = sinsp_container_lookup_state::FAILED;
+ 			}
++
+ 		}
+ 
+ #ifndef _WIN32
+@@ -4791,10 +4797,12 @@ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
+ 		errstr = Json::Reader().getFormattedErrorMessages();
+ 		throw sinsp_exception("Invalid JSON encountered while parsing container info: " + json + "error=" + errstr);
+ 	}
++#endif
+ }
+ 
+ void sinsp_parser::parse_container_evt(sinsp_evt *evt)
+ {
++#ifndef FALCO_STRIPPED
+ 	sinsp_evt_param *parinfo;
+ 	auto container = std::make_shared<sinsp_container_info>();
+ 
+@@ -4812,6 +4820,7 @@ void sinsp_parser::parse_container_evt(sinsp_evt *evt)
+ 	container->m_image = parinfo->m_val;
+ 
+ 	m_inspector->m_container_manager.add_container(container, evt->get_thread_info(true));
++#endif
+ }
+ 
+ void sinsp_parser::parse_cpu_hotplug_enter(sinsp_evt *evt)
+@@ -4935,7 +4944,9 @@ void sinsp_parser::parse_chroot_exit(sinsp_evt *evt)
+ 		}
+ 		// Root change, let's detect if we are on a container
+ 		ASSERT(m_inspector);
++#ifndef FALCO_STRIPPED
+ 		m_inspector->m_container_manager.resolve_container(evt->m_tinfo, m_inspector->is_live());
++#endif
+ 	}
+ }
+ 
+diff --git a/userspace/libsinsp/sinsp.cpp b/userspace/libsinsp/sinsp.cpp
+index bece9fc3..4fa3d077 100644
+--- a/userspace/libsinsp/sinsp.cpp
++++ b/userspace/libsinsp/sinsp.cpp
+@@ -67,7 +67,9 @@ sinsp::sinsp() :
+ 	m_external_event_processor(),
+ 	m_evt(this),
+ 	m_lastevent_ts(0),
++#ifndef FALCO_STRIPPED
+ 	m_container_manager(this),
++#endif
+ 	m_suppressed_comms()
+ {
+ #if !defined(CYGWING_AGENT) && defined(HAS_CAPTURE)
+@@ -202,7 +204,9 @@ sinsp::~sinsp()
+ 		delete[] m_meinfo.m_piscapevt;
+ 	}
+ 
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.cleanup();
++#endif
+ 
+ #ifndef CYGWING_AGENT
+ 	delete m_k8s_client;
+@@ -770,8 +774,9 @@ void sinsp::autodump_start(const string& dump_filename, bool compress)
+ 	{
+ 		throw sinsp_exception(scap_getlasterr(m_h));
+ 	}
+-
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.dump_containers(m_dumper);
++#endif
+ }
+ 
+ void sinsp::autodump_next_file()
+@@ -1226,6 +1231,7 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
+ 	if(!is_capture())
+ 	{
+ 		m_thread_manager->remove_inactive_threads();
++#ifndef FALCO_STRIPPED
+ 		m_container_manager.remove_inactive_containers();
+ 
+ 		update_k8s_state();
+@@ -1234,6 +1240,7 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
+ 		{
+ 			update_mesos_state();
+ 		}
++#endif
+ 	}
+ #endif // HAS_ANALYZER
+ 
+@@ -1571,37 +1578,51 @@ void sinsp::add_suppressed_comms(scap_open_args &oargs)
+ 
+ void sinsp::set_docker_socket_path(std::string socket_path)
+ {
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.set_docker_socket_path(std::move(socket_path));
++#endif
+ }
+ 
+ void sinsp::set_query_docker_image_info(bool query_image_info)
+ {
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.set_query_docker_image_info(query_image_info);
++#endif
+ }
+ 
+ void sinsp::set_cri_extra_queries(bool extra_queries)
+ {
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.set_cri_extra_queries(extra_queries);
++#endif
+ }
+ 
+ void sinsp::set_cri_socket_path(const std::string& path)
+ {
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.set_cri_socket_path(path);
++#endif
+ }
+ 
+ void sinsp::set_cri_timeout(int64_t timeout_ms)
+ {
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.set_cri_timeout(timeout_ms);
++#endif
+ }
+ 
+ void sinsp::set_cri_async(bool async)
+ {
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.set_cri_async(async);
++#endif
+ }
+ 
+ void sinsp::set_cri_delay(uint64_t delay_ms)
+ {
++#ifndef FALCO_STRIPPED
+ 	m_container_manager.set_cri_delay(delay_ms);
++#endif
+ }
+ 
+ void sinsp::set_snaplen(uint32_t snaplen)
+diff --git a/userspace/libsinsp/sinsp.h b/userspace/libsinsp/sinsp.h
+index 6f9f0a73..99b8b6ed 100644
+--- a/userspace/libsinsp/sinsp.h
++++ b/userspace/libsinsp/sinsp.h
+@@ -1045,8 +1045,9 @@ private:
+ 	sinsp_network_interfaces* m_network_interfaces;
+ public:
+ 	sinsp_thread_manager* m_thread_manager;
+-
++#ifndef FALCO_STRIPPED
+ 	sinsp_container_manager m_container_manager;
++#endif
+ 
+ 	//
+ 	// Kubernetes
+@@ -1219,7 +1220,9 @@ public:
+ 	friend class sinsp_threadinfo;
+ 	friend class sinsp_fdtable;
+ 	friend class sinsp_thread_manager;
++#ifndef FALCO_STRIPPED
+ 	friend class sinsp_container_manager;
++#endif
+ 	friend class sinsp_dumper;
+ 	friend class sinsp_analyzer_fd_listener;
+ 	friend class sinsp_chisel;
+diff --git a/userspace/libsinsp/threadinfo.cpp b/userspace/libsinsp/threadinfo.cpp
+index c847a28b..770526f0 100644
+--- a/userspace/libsinsp/threadinfo.cpp
++++ b/userspace/libsinsp/threadinfo.cpp
+@@ -421,7 +421,9 @@ void sinsp_threadinfo::init(scap_threadinfo* pi)
+ 	set_cgroups(pi->cgroups, pi->cgroups_len);
+ 	m_root = pi->root;
+ 	ASSERT(m_inspector);
++#ifndef FALCO_STRIPPED
+ 	m_inspector->m_container_manager.resolve_container(this, !m_inspector->is_capture());
++#endif
+ 	//
+ 	// Prepare for filtering
+ 	//

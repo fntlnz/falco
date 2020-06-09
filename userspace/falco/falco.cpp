@@ -43,8 +43,10 @@ limitations under the License.
 #include "falco_engine.h"
 #include "config_falco.h"
 #include "statsfilewriter.h"
+#ifndef FALCO_STRIPPED
 #include "webserver.h"
 #include "grpc_server.h"
+#endif
 #include "banned.h" // This raises a compilation error when certain functions are used
 
 typedef function<void(sinsp* inspector)> open_t;
@@ -188,6 +190,7 @@ void read_k8s_audit_trace_file(falco_engine *engine,
 			       falco_outputs *outputs,
 			       string &trace_filename)
 {
+#ifndef FALCO_STRIPPED
 	ifstream ifs(trace_filename);
 
 	uint64_t line_num = 0;
@@ -210,6 +213,7 @@ void read_k8s_audit_trace_file(falco_engine *engine,
 			return;
 		}
 	}
+#endif
 }
 
 static std::string read_file(std::string filename)
@@ -458,9 +462,11 @@ int falco_init(int argc, char **argv)
 	double duration;
 	scap_stats cstats;
 
+#ifndef FALCO_STRIPPED
 	falco_webserver webserver;
 	falco::grpc::server grpc_server;
 	std::thread grpc_server_thread;
+#endif
 
 	static struct option long_options[] =
 	{
@@ -1194,7 +1200,7 @@ int falco_init(int argc, char **argv)
 		}
 		delete mesos_api;
 		mesos_api = 0;
-
+#ifndef FALCO_STRIPPED
 		if(trace_filename.empty() && config.m_webserver_enabled && !disable_k8s_audit)
 		{
 			std::string ssl_option = (config.m_webserver_ssl_enabled ? " (SSL)" : "");
@@ -1202,6 +1208,7 @@ int falco_init(int argc, char **argv)
 			webserver.init(&config, engine, outputs);
 			webserver.start();
 		}
+
 
 		// gRPC server
 		if(config.m_grpc_enabled)
@@ -1220,7 +1227,7 @@ int falco_init(int argc, char **argv)
 				grpc_server.run();
 			});
 		}
-
+#endif
 		if(!trace_filename.empty() && !trace_is_scap)
 		{
 			read_k8s_audit_trace_file(engine,
@@ -1263,25 +1270,28 @@ int falco_init(int argc, char **argv)
 		inspector->close();
 		engine->print_stats();
 		sdropmgr.print_stats();
+#ifndef FALCO_STRIPPED
 		webserver.stop();
 		if(grpc_server_thread.joinable())
 		{
 			grpc_server.shutdown();
 			grpc_server_thread.join();
 		}
+#endif
 	}
 	catch(exception &e)
 	{
 		display_fatal_err("Runtime error: " + string(e.what()) + ". Exiting.\n");
 
 		result = EXIT_FAILURE;
-
+#ifndef FALCO_STRIPPED
 		webserver.stop();
 		if(grpc_server_thread.joinable())
 		{
 			grpc_server.shutdown();
 			grpc_server_thread.join();
 		}
+#endif
 	}
 
 exit:

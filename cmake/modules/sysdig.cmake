@@ -60,9 +60,13 @@ add_subdirectory("${SYSDIG_SOURCE_DIR}/userspace/libscap" "${PROJECT_BINARY_DIR}
 add_subdirectory("${SYSDIG_SOURCE_DIR}/userspace/libsinsp" "${PROJECT_BINARY_DIR}/userspace/libsinsp")
 add_dependencies(sinsp tbb b64 luajit)
 
+
 # explicitly disable the tests of this dependency
 set(CREATE_TEST_TARGETS OFF)
 
 if(USE_BUNDLED_DEPS)
-  add_dependencies(scap grpc curl jq)
+  add_dependencies(scap curl jq)
+  if(NOT STRIPPED_BUILD)
+  add_dependencies(scap grpc)
+  endif()
 endif()
